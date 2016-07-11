@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/mysql"
 )
 
 // Column represents statistics for a column.
@@ -240,4 +241,65 @@ func TableFromPB(ti *model.TableInfo, tpb *TablePB) (*Table, error) {
 		t.Columns[i] = c
 	}
 	return t, nil
+}
+
+// DefaultTable creates a default Table statistics when statistic can not be found in KV store.
+func DefaultTable(ti *model.TableInfo) *Table {
+	t := &Table{info: ti}
+	t.TS = 1
+	t.Count = 10000
+	t.Columns = make([]*Column, len(ti.Columns))
+	for i, v := range ti.Columns {
+		numbers := defaultNumbers()
+		c := &Column{
+			ID: v.ID,
+			NDV: 5000,
+			Numbers: numbers,
+			Values: defaultValues(v, numbers),
+			Repeats: defaultRepeats,
+		}
+		t.Columns[i] = c
+	}
+	return t
+}
+
+func defaultNumbers() []int64 {
+	numbers := make([]int64, 5)
+	for i := range numbers {
+		numbers[i] = 2000 * (i+1) - 1
+	}
+	return numbers
+}
+
+var defaultStrValues = []types.Datum{
+	types.NewStringDatum("/"),
+	types.NewStringDatum("9"),
+	types.NewStringDatum("Z"),
+	types.NewStringDatum("z"),
+	types.NewStringDatum("~"),
+}
+
+var defaultRepeats = []int64{2, 2, 2, 2, 2}
+
+func defaultValues(col *model.ColumnInfo, numbers []int64) []types.Datum {
+	values := make([]types.Datum, len(numbers))
+	for i := range values {
+		number := numbers[i]
+		switch col.Tp {
+		case mysql.TypeTiny:
+			values[i] = types.NewIntDatum(int64(i))
+		case mysql.TypeLong, mysql.TypeLonglong, mysql.TypeShort, mysql.TypeInt24:
+			values[i] = types.NewIntDatum(number)
+		case mysql.TypeFloat:
+			values[i] = types.NewFloat32Datum(float32(number))
+		case mysql.TypeDouble:
+			values[i] = types.NewFloat64Datum(float64(number))
+		case mysql.TypeString, mysql.TypeVarchar, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
+			values[i] = defaultStrValues[i]
+		case mysql.TypeNewDecimal:
+			values[i] = types.NewDecimalDatum(mysql.NewDecimalFromInt(number, 0))
+		}
+		// TODO: add default values for other types.
+	}
+	return values
 }
